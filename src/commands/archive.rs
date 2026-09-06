@@ -1,6 +1,6 @@
-use serenity::all::{CreateButton, EditChannel, EditMessage, PermissionOverwriteType};
+use serenity::all::{EditChannel, EditMessage, PermissionOverwriteType};
 
-use crate::commands::competition::get_competition_from_ctx;
+use crate::commands::competition::{get_competition_from_ctx, get_join_message, join_button};
 use crate::commands::{has_perms, CmdContext, Error};
 use crate::config::config;
 
@@ -42,23 +42,11 @@ pub async fn archive(ctx: CmdContext<'_>) -> Result<(), Error> {
 
     // Edit button to no longer provide access
     let active = ctx.data().conn().await.get_active_ctfs().await?;
-    if let Some(join_message_id) = join_channel.guild().and_then(|guild| guild.last_message_id) {
-        let mut join_message = join_channel_id.message(ctx, join_message_id).await?;
-        join_message
-            .edit(ctx, {
-                let mut to_send = EditMessage::new();
-                for ctf in &active {
-                    if ctf.channel_id != competition.channel_id {
-                        to_send = to_send.button(
-                            CreateButton::new(ctf.channel_id.to_string())
-                                .label(format!("Play in {}", &ctf.name)),
-                        );
-                    }
-                }
-                to_send
-            })
-            .await?;
-    }
+    let edit = active.iter().fold(EditMessage::new(), |edit, ctf| {
+        edit.button(join_button(&ctf.name, ctf.channel_id))
+    });
+    let mut join_message = get_join_message(&ctx, &join_channel.guild().unwrap()).await?;
+    join_message.edit(&ctx, edit).await?;
 
     // Remove viewing restrictions
     let roles = &ctx
@@ -70,7 +58,9 @@ pub async fn archive(ctx: CmdContext<'_>) -> Result<(), Error> {
         .values()
         .find(|role| role.name == "@everyone")
         .ok_or(anyhow::anyhow!("\\@everyone role not found"))?;
-    channel.delete_permission(ctx, PermissionOverwriteType::Role(everyone.id)).await?;
+    channel
+        .delete_permission(ctx, PermissionOverwriteType::Role(everyone.id))
+        .await?;
 
     // Move the channel to the archived category.
     channel
